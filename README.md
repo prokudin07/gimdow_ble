@@ -30,8 +30,11 @@ external_components:
 
 ```yaml
 substitutions:
+  # Replace these values with the ones from your own lock.
   gimdow_local_key: "YOUR_LOCAL_KEY"
   gimdow_mac: "AA:BB:CC:DD:EE:FF"
+  gimdow_uuid: ${gimdow_uuid}
+  gimdow_device_id: "YOUR_TUYA_DEVICE_ID"
 
 esp32_ble_tracker:
 
@@ -53,8 +56,8 @@ lock:
     ble_client_id: gimdow_ble_client
 
     local_key: ${gimdow_local_key}
-    uuid: "YOUR_TUYA_UUID"
-    tuya_device_id: "YOUR_TUYA_DEVICE_ID"
+    uuid: ${gimdow_uuid}
+    tuya_device_id: ${gimdow_device_id}
 ```
 
 ## Optional physical bolt-state sensor
@@ -69,8 +72,8 @@ lock:
 
     ble_client_id: gimdow_ble_client
     local_key: ${gimdow_local_key}
-    uuid: "YOUR_TUYA_UUID"
-    tuya_device_id: "YOUR_TUYA_DEVICE_ID"
+    uuid: ${gimdow_uuid}
+    tuya_device_id: ${gimdow_device_id}
 
     state_sensor: Lock_sensor
 ```
@@ -220,8 +223,8 @@ lock:
     ble_client_id: gimdow_ble_client
 
     local_key: ${gimdow_local_key}
-    uuid: "YOUR_TUYA_UUID"
-    tuya_device_id: "YOUR_TUYA_DEVICE_ID"
+    uuid: ${gimdow_uuid}
+    tuya_device_id: ${gimdow_device_id}
 ```
 
 ## Status
