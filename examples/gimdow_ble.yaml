@@ -1,0 +1,30 @@
+substitutions:
+  gimdow_local_key: "YOUR_LOCAL_KEY"
+  gimdow_mac: "AA:BB:CC:DD:EE:FF"
+
+esp32_ble_tracker:
+
+ble_client:
+  - mac_address: ${gimdow_mac}
+    id: gimdow_ble_client
+    auto_connect: false
+
+external_components:
+  - source: github://prokudin07/gimdow_ble
+    components: [ gimdow_ble ]
+    refresh: 0s
+
+lock:
+  - platform: gimdow_ble
+    name: Gimdow
+    id: gimdow
+
+    ble_client_id: gimdow_ble_client
+
+    local_key: ${gimdow_local_key}
+    uuid: "YOUR_TUYA_UUID"
+    tuya_device_id: "YOUR_TUYA_DEVICE_ID"
+
+    # Optional external binary sensor of the physical bolt state.
+    # For this component: ON = UNLOCKED, OFF = LOCKED.
+    # state_sensor: Lock_sensor
