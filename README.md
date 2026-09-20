@@ -115,6 +115,8 @@ Look for:
 - **MAC** — use this as the ESPHome BLE address.
 - **Virtual ID** — use this as `tuya_device_id`.
 
+![Tuya Smart / Smart Life device information showing Virtual ID and MAC](images/tuya-device-info.jpg)
+
 Example:
 
 ```text
