@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="591" height="720" viewBox="0 0 591 720">
+  <rect width="591" height="720" fill="#f5f6fb"/>
+  <text x="38" y="58" font-family="Arial,Helvetica,sans-serif" font-size="34" fill="#222">‹</text>
+  <text x="165" y="60" font-family="Arial,Helvetica,sans-serif" font-size="24" font-weight="700" fill="#111">Информация об устройстве</text>
+  <rect x="26" y="120" width="539" height="430" rx="28" fill="#fff"/>
+  <g font-family="Arial,Helvetica,sans-serif" font-size="23" fill="#161616">
+    <text x="50" y="182" font-weight="700">Виртуальный ID</text>
+    <text x="50" y="272" font-weight="700">MAC</text>
+    <text x="50" y="362" font-weight="700">Часовой пояс</text>
+    <text x="50" y="452" font-weight="700">Подключение через</text>
+    <text x="50" y="520" font-weight="700">Статус устройства</text>
+  </g>
+  <g font-family="Arial,Helvetica,sans-serif" font-size="21" fill="#777">
+    <text x="280" y="165">bf59ffwdy</text>
+    <text x="280" y="194">ww949lh</text>
+    <text x="190" y="272">DC:23:4E:D1:FC:AD</text>
+    <text x="350" y="362">Europe/Moscow</text>
+    <text x="285" y="435">Шлюз/Мобильный</text>
+    <text x="365" y="465">телефон</text>
+    <text x="372" y="520">Не подключено</text>
+  </g>
+  <g font-family="Arial,Helvetica,sans-serif" font-size="20" fill="#228be6">
+    <text x="455" y="182">Копировать</text>
+    <text x="455" y="272">Копировать</text>
+  </g>
+  <text x="295" y="610" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="16" fill="#777">
+    Пример экрана Tuya Smart / Smart Life
+  </text>
+</svg>
