@@ -27,6 +27,8 @@
 namespace esphome {
 namespace gimdow_ble {
 
+namespace espbt = esphome::esp32_ble_tracker;
+
 
 static const char *const TAG = "gimdow_ble";
 
