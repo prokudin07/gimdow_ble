@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstring>
@@ -13,10 +14,12 @@
 #include "esphome/components/ble_client/ble_client.h"
 #include "esphome/components/binary_sensor/binary_sensor.h"
 
+#include <esp_gatt_common_api.h>
 #include <esp_gattc_api.h>
 #include <esp_system.h>
 
 #include <mbedtls/aes.h>
+#include <mbedtls/base64.h>
 #include <mbedtls/md5.h>
 #include <mbedtls/version.h>
 
@@ -29,29 +32,57 @@ static const char *const TAG = "gimdow_ble";
 
 
 // -----------------------------------------------------------------------------
-// Tuya BLE v3 codes
+// Tuya BLE codes
 // -----------------------------------------------------------------------------
 
 static constexpr uint16_t FUN_SENDER_DEVICE_INFO = 0x0000;
 static constexpr uint16_t FUN_SENDER_PAIR        = 0x0001;
 static constexpr uint16_t FUN_SENDER_DPS         = 0x0002;
+static constexpr uint16_t FUN_SENDER_DPS_V4      = 0x0027;
 
 static constexpr uint16_t FUN_RECEIVE_DP         = 0x8001;
 static constexpr uint16_t FUN_RECEIVE_TIME_DP    = 0x8003;
+static constexpr uint16_t FUN_RECEIVE_DP_V4      = 0x8006;
+static constexpr uint16_t FUN_RECEIVE_TIME_DP_V4 = 0x8007;
 static constexpr uint16_t FUN_RECEIVE_TIME1_REQ  = 0x8011;
 static constexpr uint16_t FUN_RECEIVE_TIME2_REQ  = 0x8012;
 
 
 // -----------------------------------------------------------------------------
-// Gimdow A1 PRO MAX / rlyxv7pe
+// Supported lock models
 // -----------------------------------------------------------------------------
 
-static constexpr uint16_t TUYA_SERVICE_UUID = 0x1910;
-static constexpr uint16_t TUYA_NOTIFY_UUID  = 0x2B10;
-static constexpr uint16_t TUYA_WRITE_UUID   = 0x2B11;
+enum class GimdowModel : uint8_t {
+  A1_PRO_MAX = 0,
+  A1_ULTRA = 1,
+};
 
-static constexpr uint8_t PROTOCOL_VERSION = 3;
-static constexpr size_t GATT_PACKET_SIZE = 20;
+
+// -----------------------------------------------------------------------------
+// Gimdow A1 PRO MAX / rlyxv7pe / Tuya BLE v3
+// -----------------------------------------------------------------------------
+
+static constexpr uint16_t V3_SERVICE_UUID = 0x1910;
+static constexpr uint16_t V3_NOTIFY_UUID  = 0x2B10;
+static constexpr uint16_t V3_WRITE_UUID   = 0x2B11;
+
+static constexpr uint8_t V3_PROTOCOL_VERSION = 3;
+static constexpr size_t V3_GATT_PACKET_SIZE = 20;
+
+
+// -----------------------------------------------------------------------------
+// Gimdow A1 Ultra / hc7n0urm / TuyaOS FD50
+// -----------------------------------------------------------------------------
+
+static constexpr char ULTRA_SERVICE_UUID[] =
+    "0000fd50-0000-1000-8000-00805f9b34fb";
+static constexpr char ULTRA_NOTIFY_UUID[] =
+    "00000002-0000-1001-8001-00805f9b07d0";
+static constexpr char ULTRA_WRITE_UUID[] =
+    "00000001-0000-1001-8001-00805f9b07d0";
+
+static constexpr uint16_t ULTRA_LOCAL_MTU = 247;
+static constexpr size_t ULTRA_DEVICE_INFO_PACKET_SIZE = 244;
 
 
 // -----------------------------------------------------------------------------
@@ -97,6 +128,10 @@ class GimdowBLELock :
     this->ble_parent_ = parent;
   }
 
+  void set_model(uint8_t value) {
+    this->model_ = static_cast<GimdowModel>(value);
+  }
+
   void set_local_key(const std::string &value) {
     this->local_key_string_ = value;
   }
@@ -107,6 +142,10 @@ class GimdowBLELock :
 
   void set_device_id(const std::string &value) {
     this->device_id_ = value;
+  }
+
+  void set_ble_unlock_check(const std::string &value) {
+    this->ble_unlock_check_ = value;
   }
 
   void set_state_sensor(binary_sensor::BinarySensor *sensor) {
@@ -135,7 +174,11 @@ class GimdowBLELock :
   // ---------------------------------------------------------------------------
 
   void setup() override {
-    ESP_LOGI(TAG, "Initialising Gimdow BLE test lock");
+    ESP_LOGI(
+        TAG,
+        "Initialising Gimdow BLE lock (%s)",
+        this->model_name_()
+    );
 
     this->traits.set_assumed_state(true);
 
@@ -145,7 +188,17 @@ class GimdowBLELock :
       return;
     }
 
-    // Tuya rlyxv7pe uses only first six bytes of local_key.
+    if (
+        this->model_ == GimdowModel::A1_ULTRA &&
+        this->ble_unlock_check_.empty()
+    ) {
+      ESP_LOGE(TAG, "a1_ultra requires ble_unlock_check");
+      this->mark_failed();
+      return;
+    }
+
+    // Tuya lock profiles used here derive the BLE login/session keys from
+    // the first six bytes of local_key.
     memcpy(
         this->local_key_.data(),
         this->local_key_string_.data(),
@@ -158,15 +211,36 @@ class GimdowBLELock :
         this->login_key_.data()
     );
 
+    if (this->model_ == GimdowModel::A1_ULTRA) {
+      // FD50 DEVICE_INFO must fit in one ATT write. ESPHome/ESP-IDF will
+      // negotiate this preferred local MTU when the connection is created.
+      esp_err_t err = esp_ble_gatt_set_local_mtu(ULTRA_LOCAL_MTU);
+      if (err != ESP_OK) {
+        ESP_LOGW(
+            TAG,
+            "Unable to set preferred BLE MTU %u: %d",
+            ULTRA_LOCAL_MTU,
+            err
+        );
+      }
+    }
+
     ESP_LOGI(TAG, "Tuya login key prepared");
   }
 
 
   void dump_config() override {
     ESP_LOGCONFIG(TAG, "Gimdow BLE:");
+    ESP_LOGCONFIG(TAG, "  Model: %s", this->model_name_());
     ESP_LOGCONFIG(TAG, "  UUID: %s", this->uuid_.c_str());
     ESP_LOGCONFIG(TAG, "  Device ID: %s", this->device_id_.c_str());
-    ESP_LOGCONFIG(TAG, "  Protocol: Tuya BLE v3");
+    ESP_LOGCONFIG(
+        TAG,
+        "  Protocol: %s",
+        this->model_ == GimdowModel::A1_ULTRA
+            ? "TuyaOS FD50 / V4"
+            : "Tuya BLE v3"
+    );
   }
 
 
@@ -196,8 +270,6 @@ class GimdowBLELock :
     }
 
     // Send one BLE fragment at a time.
-    // This avoids flooding Bluedroid with several GATT writes at once.
-
     if (this->tx_index_ >= this->tx_packets_.size())
       return;
 
@@ -275,13 +347,11 @@ class GimdowBLELock :
 
     this->command_pending_ = true;
 
-    // If already authenticated, command can be sent immediately.
     if (this->paired_ && this->session_key_valid_) {
       this->send_pending_command_();
       return;
     }
 
-    // Otherwise request BLE connection.
     if (this->ble_parent_ != nullptr) {
       ESP_LOGD(TAG, "Connecting to Gimdow...");
       this->ble_parent_->connect();
@@ -303,6 +373,20 @@ class GimdowBLELock :
 
     switch (event) {
 
+      case ESP_GATTC_CFG_MTU_EVT: {
+        if (param->cfg_mtu.status == ESP_GATT_OK) {
+          this->negotiated_mtu_ = param->cfg_mtu.mtu;
+          ESP_LOGI(
+              TAG,
+              "BLE MTU negotiated: %u",
+              this->negotiated_mtu_
+          );
+          this->try_start_handshake_();
+        }
+        break;
+      }
+
+
       // -----------------------------------------------------------------------
       // GATT database discovered
       // -----------------------------------------------------------------------
@@ -310,23 +394,59 @@ class GimdowBLELock :
       case ESP_GATTC_SEARCH_CMPL_EVT: {
         ESP_LOGI(TAG, "GATT discovery complete");
 
-        auto *notify_chr = this->parent()->get_characteristic(
-            TUYA_SERVICE_UUID,
-            TUYA_NOTIFY_UUID
-        );
+        ble_client::BLECharacteristic *notify_chr = nullptr;
+        ble_client::BLECharacteristic *write_chr = nullptr;
 
-        auto *write_chr = this->parent()->get_characteristic(
-            TUYA_SERVICE_UUID,
-            TUYA_WRITE_UUID
-        );
+        if (this->model_ == GimdowModel::A1_ULTRA) {
+          auto service_uuid = espbt::ESPBTUUID::from_raw(
+              ULTRA_SERVICE_UUID,
+              strlen(ULTRA_SERVICE_UUID)
+          );
+          auto notify_uuid = espbt::ESPBTUUID::from_raw(
+              ULTRA_NOTIFY_UUID,
+              strlen(ULTRA_NOTIFY_UUID)
+          );
+          auto write_uuid = espbt::ESPBTUUID::from_raw(
+              ULTRA_WRITE_UUID,
+              strlen(ULTRA_WRITE_UUID)
+          );
+
+          notify_chr = this->parent()->get_characteristic(
+              service_uuid,
+              notify_uuid
+          );
+
+          write_chr = this->parent()->get_characteristic(
+              service_uuid,
+              write_uuid
+          );
+        } else {
+          notify_chr = this->parent()->get_characteristic(
+              V3_SERVICE_UUID,
+              V3_NOTIFY_UUID
+          );
+
+          write_chr = this->parent()->get_characteristic(
+              V3_SERVICE_UUID,
+              V3_WRITE_UUID
+          );
+        }
 
         if (notify_chr == nullptr) {
-          ESP_LOGE(TAG, "Tuya notify characteristic 0x2B10 not found");
+          ESP_LOGE(
+              TAG,
+              "%s notify characteristic not found",
+              this->model_name_()
+          );
           return;
         }
 
         if (write_chr == nullptr) {
-          ESP_LOGE(TAG, "Tuya write characteristic 0x2B11 not found");
+          ESP_LOGE(
+              TAG,
+              "%s write characteristic not found",
+              this->model_name_()
+          );
           return;
         }
 
@@ -348,8 +468,6 @@ class GimdowBLELock :
           ESP_LOGE(TAG, "register_for_notify failed: %d", err);
         }
 
-        // Do NOT set ESTABLISHED here.
-        // ESPHome 2026 requires waiting until REG_FOR_NOTIFY_EVT.
         break;
       }
 
@@ -376,15 +494,10 @@ class GimdowBLELock :
         this->node_state =
             esp32_ble_tracker::ClientState::ESTABLISHED;
 
+        this->notifications_ready_ = true;
+
         this->reset_protocol_();
-
-        ESP_LOGI(TAG, "Sending DEVICE_INFO");
-
-        this->send_packet_(
-            FUN_SENDER_DEVICE_INFO,
-            {},
-            0
-        );
+        this->try_start_handshake_();
 
         break;
       }
@@ -420,6 +533,10 @@ class GimdowBLELock :
 
         this->paired_ = false;
         this->session_key_valid_ = false;
+        this->notifications_ready_ = false;
+        this->device_info_sent_ = false;
+        this->mtu_requested_ = false;
+        this->negotiated_mtu_ = 23;
 
         this->notify_handle_ = 0;
         this->write_handle_ = 0;
@@ -443,6 +560,69 @@ class GimdowBLELock :
  private:
 
   // ---------------------------------------------------------------------------
+  // Model helpers
+  // ---------------------------------------------------------------------------
+
+  const char *model_name_() const {
+    switch (this->model_) {
+      case GimdowModel::A1_ULTRA:
+        return "A1 Ultra";
+      case GimdowModel::A1_PRO_MAX:
+      default:
+        return "A1 Pro Max";
+    }
+  }
+
+
+  void try_start_handshake_() {
+    if (!this->notifications_ready_ || this->device_info_sent_)
+      return;
+
+    if (
+        this->model_ == GimdowModel::A1_ULTRA &&
+        this->negotiated_mtu_ < 40
+    ) {
+      ESP_LOGI(
+          TAG,
+          "Waiting for larger MTU before FD50 DEVICE_INFO (current %u)",
+          this->negotiated_mtu_
+      );
+
+      if (!this->mtu_requested_) {
+        this->mtu_requested_ = true;
+
+        esp_err_t err = esp_ble_gattc_send_mtu_req(
+            this->parent()->get_gattc_if(),
+            this->parent()->get_conn_id()
+        );
+
+        if (err != ESP_OK) {
+          ESP_LOGW(TAG, "MTU request failed: %d", err);
+        }
+      }
+
+      return;
+    }
+
+    std::vector<uint8_t> payload;
+
+    if (this->model_ == GimdowModel::A1_ULTRA) {
+      payload = {0x00, 0xF3};
+    }
+
+    this->device_info_sent_ = true;
+
+    ESP_LOGI(TAG, "Sending DEVICE_INFO");
+
+    this->send_packet_(
+        FUN_SENDER_DEVICE_INFO,
+        payload,
+        0
+    );
+  }
+
+
+  // ---------------------------------------------------------------------------
   // MD5
   // ---------------------------------------------------------------------------
 
@@ -460,7 +640,7 @@ class GimdowBLELock :
 
 
   // ---------------------------------------------------------------------------
-  // CRC16 — same as Tuya-BLE Python implementation
+  // CRC16
   // ---------------------------------------------------------------------------
 
   static uint16_t crc16_(
@@ -605,7 +785,7 @@ class GimdowBLELock :
     int ret = mbedtls_aes_crypt_cbc(
         &aes,
         MBEDTLS_AES_DECRYPT,
-        encrypted_len,
+        plain.size(),
         iv,
         encrypted,
         plain.data()
@@ -701,10 +881,6 @@ class GimdowBLELock :
     );
 
 
-    // -------------------------------------------------------------------------
-    // Split into 20-byte Tuya BLE fragments
-    // -------------------------------------------------------------------------
-
     std::vector<std::vector<uint8_t>> packets;
 
     size_t pos = 0;
@@ -725,13 +901,38 @@ class GimdowBLELock :
             total.end()
         );
 
+        uint8_t packet_protocol_version = this->protocol_version_;
+
+        if (
+            this->model_ == GimdowModel::A1_ULTRA &&
+            code == FUN_SENDER_DEVICE_INFO
+        ) {
+          packet_protocol_version = 2;
+        }
+
         packet.push_back(
-            PROTOCOL_VERSION << 4
+            packet_protocol_version << 4
         );
       }
 
+      size_t packet_size = V3_GATT_PACKET_SIZE;
+
+      if (
+          this->model_ == GimdowModel::A1_ULTRA &&
+          code == FUN_SENDER_DEVICE_INFO
+      ) {
+        packet_size = ULTRA_DEVICE_INFO_PACKET_SIZE;
+      }
+
       size_t available =
-          GATT_PACKET_SIZE - packet.size();
+          packet_size > packet.size()
+              ? packet_size - packet.size()
+              : 0;
+
+      if (available == 0) {
+        ESP_LOGE(TAG, "Invalid Tuya packet size");
+        return;
+      }
 
       size_t count =
           std::min(
@@ -821,7 +1022,6 @@ class GimdowBLELock :
 
       this->rx_buffer_.clear();
 
-      // Skip protocol-version nibble byte.
       if (pos >= len)
         return;
 
@@ -976,17 +1176,13 @@ class GimdowBLELock :
       size_t len
   ) {
 
-    // -------------------------------------------------------------------------
-    // DEVICE_INFO response
-    // -------------------------------------------------------------------------
-
     if (code == FUN_SENDER_DEVICE_INFO) {
       if (len < 46) {
         ESP_LOGE(TAG, "DEVICE_INFO response is too short");
         return;
       }
 
-      uint8_t protocol_version = data[2];
+      this->protocol_version_ = data[2];
 
       ESP_LOGI(
           TAG,
@@ -995,15 +1191,7 @@ class GimdowBLELock :
           data[3]
       );
 
-      if (protocol_version != 3) {
-        ESP_LOGW(
-            TAG,            "Unexpected Tuya protocol %u",
-            protocol_version
-        );
-      }
 
-
-      // session_key = MD5(local_key[:6] + srand)
       uint8_t source[12];
 
       memcpy(
@@ -1036,10 +1224,6 @@ class GimdowBLELock :
     }
 
 
-    // -------------------------------------------------------------------------
-    // PAIR response
-    // -------------------------------------------------------------------------
-
     if (code == FUN_SENDER_PAIR) {
       if (len != 1) {
         ESP_LOGE(TAG, "Invalid PAIR response");
@@ -1048,8 +1232,6 @@ class GimdowBLELock :
 
       uint8_t result = data[0];
 
-      // 0 = paired
-      // 2 = already paired
       if (result == 0 || result == 2) {
         this->paired_ = true;
 
@@ -1075,12 +1257,8 @@ class GimdowBLELock :
     }
 
 
-    // -------------------------------------------------------------------------
-    // Datapoints
-    // -------------------------------------------------------------------------
-
     if (code == FUN_RECEIVE_DP) {
-      this->parse_datapoints_(
+      this->parse_datapoints_v3_(
           data,
           len
       );
@@ -1088,9 +1266,27 @@ class GimdowBLELock :
     }
 
 
+    if (
+        code == FUN_RECEIVE_DP_V4 ||
+        code == FUN_RECEIVE_TIME_DP_V4
+    ) {
+      this->parse_datapoints_v4_(
+          data,
+          len
+      );
+
+      // Tuya V4 async datapoint events expect an empty response using
+      // the same message code and response_to=received sequence number.
+      this->send_packet_(
+          code,
+          {},
+          seq_num
+      );
+      return;
+    }
+
+
     if (code == FUN_RECEIVE_TIME_DP) {
-      // Timestamp prefix exists before datapoints.
-      // Not needed for initial test.
       return;
     }
 
@@ -1101,7 +1297,7 @@ class GimdowBLELock :
     ) {
       ESP_LOGD(
           TAG,
-          "Time request received (ignored in test component)"
+          "Time request received (ignored)"
       );
       return;
     }
@@ -1147,42 +1343,139 @@ class GimdowBLELock :
 
 
   // ---------------------------------------------------------------------------
-  // DP6 / DP46
+  // Ultra unlock helper
+  // ---------------------------------------------------------------------------
+
+  bool build_ultra_unlock_payload_(std::vector<uint8_t> &payload) {
+    if (this->ble_unlock_check_.empty()) {
+      ESP_LOGE(TAG, "ble_unlock_check is missing");
+      return false;
+    }
+
+    size_t decoded_capacity =
+        (this->ble_unlock_check_.size() * 3) / 4 + 4;
+
+    std::vector<uint8_t> decoded(decoded_capacity);
+    size_t decoded_len = 0;
+
+    int ret = mbedtls_base64_decode(
+        decoded.data(),
+        decoded.size(),
+        &decoded_len,
+        reinterpret_cast<const unsigned char *>(
+            this->ble_unlock_check_.data()
+        ),
+        this->ble_unlock_check_.size()
+    );
+
+    if (ret != 0 || decoded_len < 19) {
+      ESP_LOGE(
+          TAG,
+          "Invalid ble_unlock_check (base64 decode=%d len=%u)",
+          ret,
+          static_cast<unsigned>(decoded_len)
+      );
+      return false;
+    }
+
+    payload = {
+        0x00, 0x00, 0x00, 0x00,
+        0x01,
+        0x47,
+        0x00, 0x00, 0x13
+    };
+
+    // prefix = check[2:4]
+    payload.push_back(decoded[2]);
+    payload.push_back(decoded[3]);
+
+    payload.push_back(0x00);
+    payload.push_back(0x01);
+
+    // check_code = check[4:12]
+    payload.insert(
+        payload.end(),
+        decoded.begin() + 4,
+        decoded.begin() + 12
+    );
+
+    payload.push_back(0x01);
+
+    // check_key = check[13:17]
+    payload.insert(
+        payload.end(),
+        decoded.begin() + 13,
+        decoded.begin() + 17
+    );
+
+    payload.push_back(0x00);
+    payload.push_back(0x01);
+
+    return true;
+  }
+
+
+  // ---------------------------------------------------------------------------
+  // Lock / unlock command
   // ---------------------------------------------------------------------------
 
   void send_pending_command_() {
     if (!this->command_pending_)
       return;
 
-    uint8_t dp = this->pending_dp_;
+    if (this->model_ == GimdowModel::A1_ULTRA) {
+      std::vector<uint8_t> payload;
 
-    // Tuya v3 bool DP:
-    // DP ID | type BOOL(1) | len(1) | TRUE(1)
+      if (this->pending_lock_state_ == lock::LOCK_STATE_UNLOCKED) {
+        if (!this->build_ultra_unlock_payload_(payload)) {
+          this->command_pending_ = false;
+          return;
+        }
 
-    std::vector<uint8_t> payload = {
-        dp,
-        0x01,
-        0x01,
-        0x01
-    };
+        ESP_LOGI(TAG, "Sending A1 Ultra V4 remote unlock");
+      } else {
+        // manual_lock / DP46 = true
+        payload = {
+            0x00, 0x00, 0x00, 0x00,
+            0x01,
+            0x2E,
+            0x00, 0x00, 0x01,
+            0x01
+        };
 
-    ESP_LOGI(
-        TAG,
-        "Sending Gimdow DP%u = true",
-        dp
-    );
+        ESP_LOGI(TAG, "Sending A1 Ultra V4 manual lock");
+      }
 
-    this->send_packet_(
-        FUN_SENDER_DPS,
-        payload,
-        0
-    );
+      this->send_packet_(
+          FUN_SENDER_DPS_V4,
+          payload,
+          0
+      );
+    } else {
+      uint8_t dp = this->pending_dp_;
+
+      std::vector<uint8_t> payload = {
+          dp,
+          0x01,
+          0x01,
+          0x01
+      };
+
+      ESP_LOGI(
+          TAG,
+          "Sending A1 Pro Max DP%u = true",
+          dp
+      );
+
+      this->send_packet_(
+          FUN_SENDER_DPS,
+          payload,
+          0
+      );
+    }
 
     this->command_pending_ = false;
 
-    // Without an external state sensor, keep the original optimistic
-    // behaviour. If state_sensor is configured, it is the only source
-    // of the lock state.
     if (this->state_sensor_ == nullptr) {
       this->publish_state(
           this->pending_lock_state_
@@ -1192,10 +1485,10 @@ class GimdowBLELock :
 
 
   // ---------------------------------------------------------------------------
-  // Basic incoming datapoint parser
+  // Incoming Tuya BLE v3 datapoints
   // ---------------------------------------------------------------------------
 
-  void parse_datapoints_(
+  void parse_datapoints_v3_(
       const uint8_t *data,
       size_t len
   ) {
@@ -1223,8 +1516,6 @@ class GimdowBLELock :
             value ? "true" : "false"
         );
 
-        // DP47 is used as the lock state only when no external
-        // bolt/lock sensor was configured.
         if (dp_id == 47 && this->state_sensor_ == nullptr) {
           this->publish_state(
               value
@@ -1240,6 +1531,57 @@ class GimdowBLELock :
 
 
   // ---------------------------------------------------------------------------
+  // Incoming TuyaOS FD50 / V4 datapoints
+  // ---------------------------------------------------------------------------
+
+  void parse_datapoints_v4_(
+      const uint8_t *data,
+      size_t len
+  ) {
+    // Observed passive physical-state event:
+    // <id:1> <flags:3=0x00002F> <type:1=BOOL> <len:2=1> <value:1>
+    // true  = open/unlocked
+    // false = closed/locked
+    for (size_t pos = 0; pos + 8 <= len; pos++) {
+      uint32_t flags =
+          (static_cast<uint32_t>(data[pos + 1]) << 16) |
+          (static_cast<uint32_t>(data[pos + 2]) << 8) |
+          static_cast<uint32_t>(data[pos + 3]);
+
+      uint8_t type = data[pos + 4];
+      uint16_t value_len = get_u16_be(data + pos + 5);
+
+      if (
+          flags == 0x00002F &&
+          type == 0x01 &&
+          value_len == 1 &&
+          pos + 8 <= len
+      ) {
+        bool value = data[pos + 7] != 0;
+
+        ESP_LOGD(
+            TAG,
+            "RX A1 Ultra physical state: %s",
+            value ? "UNLOCKED" : "LOCKED"
+        );
+
+        if (this->state_sensor_ == nullptr) {
+          this->publish_state(
+              value
+                  ? lock::LOCK_STATE_UNLOCKED
+                  : lock::LOCK_STATE_LOCKED
+          );
+        }
+
+        return;
+      }
+    }
+
+    ESP_LOGD(TAG, "RX A1 Ultra V4 payload without known state event");
+  }
+
+
+  // ---------------------------------------------------------------------------
   // Reset protocol state on every fresh BLE connection
   // ---------------------------------------------------------------------------
 
@@ -1248,6 +1590,11 @@ class GimdowBLELock :
 
     this->paired_ = false;
     this->session_key_valid_ = false;
+
+    this->protocol_version_ =
+        this->model_ == GimdowModel::A1_ULTRA
+            ? 2
+            : V3_PROTOCOL_VERSION;
 
     this->reset_rx_();
 
@@ -1262,19 +1609,19 @@ class GimdowBLELock :
 
   ble_client::BLEClient *ble_parent_{nullptr};
 
+  GimdowModel model_{GimdowModel::A1_PRO_MAX};
+
   std::string local_key_string_;
   std::string uuid_;
   std::string device_id_;
+  std::string ble_unlock_check_;
 
-  // Optional external binary sensor of the physical bolt state.
-  // ON  = UNLOCKED
-  // OFF = LOCKED
   binary_sensor::BinarySensor *state_sensor_{nullptr};
   bool external_state_initialized_{false};
 
 
   // ---------------------------------------------------------------------------
-  // Keys
+  // Keys / protocol state
   // ---------------------------------------------------------------------------
 
   std::array<uint8_t, 6> local_key_{};
@@ -1283,6 +1630,7 @@ class GimdowBLELock :
 
   bool session_key_valid_{false};
   bool paired_{false};
+  uint8_t protocol_version_{V3_PROTOCOL_VERSION};
 
 
   // ---------------------------------------------------------------------------
@@ -1291,6 +1639,11 @@ class GimdowBLELock :
 
   uint16_t notify_handle_{0};
   uint16_t write_handle_{0};
+
+  uint16_t negotiated_mtu_{23};
+  bool notifications_ready_{false};
+  bool device_info_sent_{false};
+  bool mtu_requested_{false};
 
 
   // ---------------------------------------------------------------------------
