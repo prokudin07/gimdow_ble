@@ -41,7 +41,6 @@ CONF_BATTERY_STATE_CODE = "battery_state_code"
 CONF_BATTERY_LOW = "battery_low"
 CONF_BATTERY_CRITICAL = "battery_critical"
 CONF_BEEP_VOLUME = "beep_volume"
-CONF_LOCK_DIRECTION = "lock_direction"
 
 MODEL_A1_PRO_MAX = "a1_pro_max"
 MODEL_A1_ULTRA = "a1_ultra"
@@ -82,7 +81,6 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_BATTERY_LOW): binary_sensor.binary_sensor_schema(),
             cv.Optional(CONF_BATTERY_CRITICAL): binary_sensor.binary_sensor_schema(),
             cv.Optional(CONF_BEEP_VOLUME): select.select_schema(GimdowConfigSelect),
-            cv.Optional(CONF_LOCK_DIRECTION): select.select_schema(GimdowConfigSelect),
         }
     )
     .extend(cv.COMPONENT_SCHEMA),
@@ -145,12 +143,3 @@ async def to_code(config):
         cg.add(beep_volume.set_parent(var))
         cg.add(beep_volume.set_dp_id(31))
         cg.add(var.set_beep_volume_select(beep_volume))
-
-    if CONF_LOCK_DIRECTION in config:
-        lock_direction = await select.new_select(
-            config[CONF_LOCK_DIRECTION],
-            options=["clockwise", "anticlockwise"],
-        )
-        cg.add(lock_direction.set_parent(var))
-        cg.add(lock_direction.set_dp_id(48))
-        cg.add(var.set_lock_direction_select(lock_direction))
