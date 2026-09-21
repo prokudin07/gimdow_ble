@@ -226,6 +226,36 @@ gimdow_ble_unlock_check: "YOUR_REAL_BLE_UNLOCK_CHECK"
 
 Then reference those values from the device configuration.
 
+## Lock configuration selects
+
+Both supported profiles expose two Tuya configuration datapoints:
+
+- DP31 — beep volume: `mute`, `low`, `normal`, `high`
+- DP48 — motor/lock direction: `clockwise`, `anticlockwise`
+
+Enable them as optional ESPHome select entities:
+
+```yaml
+lock:
+  - platform: gimdow_ble
+    name: Gimdow
+    id: gimdow
+
+    model: a1_pro_max
+    ble_client_id: gimdow_ble_client
+    local_key: ${gimdow_local_key}
+    uuid: ${gimdow_uuid}
+    tuya_device_id: ${gimdow_device_id}
+
+    beep_volume:
+      name: "Gimdow Beep Volume"
+
+    lock_direction:
+      name: "Gimdow Lock Direction"
+```
+
+For A1 PRO MAX these are sent as Tuya BLE v3 enum writes. For A1 Ultra they use the FD50/V4 command framing.
+
 ## Battery diagnostics
 
 Both supported jtmspro lock profiles expose Tuya DP9 as a battery-state enum.
