@@ -9,6 +9,8 @@
 
 #include "esphome/core/component.h"
 #include "esphome/core/log.h"
+#include "esphome/core/helpers.h"
+#include "esphome/core/preferences.h"
 
 #include "esphome/components/lock/lock.h"
 #include "esphome/components/ble_client/ble_client.h"
@@ -208,10 +210,6 @@ class GimdowBLELock :
     this->beep_volume_select_ = select;
   }
 
-  void set_lock_direction_select(GimdowConfigSelect *select) {
-    this->lock_direction_select_ = select;
-  }
-
   void request_config_enum(uint8_t dp_id, uint8_t value) {
     this->pending_config_dp_ = dp_id;
     this->pending_config_value_ = value;
@@ -292,6 +290,37 @@ class GimdowBLELock :
       }
     }
 
+    if (this->beep_volume_select_ != nullptr) {
+      uint32_t pref_key =
+          fnv1a_hash("gimdow_beep_volume") ^
+          fnv1a_hash(this->device_id_);
+
+      this->beep_volume_pref_ =
+          global_preferences->make_preference<uint8_t>(pref_key, true);
+
+      uint8_t saved_beep_volume = 0;
+      if (
+          this->beep_volume_pref_.load(&saved_beep_volume) &&
+          saved_beep_volume < 4
+      ) {
+        this->beep_volume_select_->publish_state(
+            static_cast<size_t>(saved_beep_volume)
+        );
+
+        ESP_LOGI(
+            TAG,
+            "Restored beep volume: %u",
+            static_cast<unsigned>(saved_beep_volume)
+        );
+      }
+
+      // One startup connection refreshes DP31 from the lock when it reports
+      // its current configuration. The saved value above makes the select
+      // available immediately after an ESP reboot.
+      this->beep_volume_startup_refresh_pending_ = true;
+      this->beep_volume_startup_refresh_at_ms_ = millis() + 2000;
+    }
+
     ESP_LOGI(TAG, "Tuya login key prepared");
   }
 
@@ -312,6 +341,18 @@ class GimdowBLELock :
 
 
   void loop() override {
+    if (
+        this->beep_volume_startup_refresh_pending_ &&
+        millis() >= this->beep_volume_startup_refresh_at_ms_
+    ) {
+      this->beep_volume_startup_refresh_pending_ = false;
+
+      if (this->ble_parent_ != nullptr) {
+        ESP_LOGD(TAG, "Startup BLE refresh for beep volume");
+        this->ble_parent_->connect();
+      }
+    }
+
     // On startup, immediately publish the current external sensor state
     // if it already has a valid value.
     if (
@@ -1591,11 +1632,8 @@ class GimdowBLELock :
       );
     }
 
-    if (dp_id == 31 && this->beep_volume_select_ != nullptr)
-      this->beep_volume_select_->publish_state(static_cast<size_t>(value));
-
-    if (dp_id == 48 && this->lock_direction_select_ != nullptr)
-      this->lock_direction_select_->publish_state(static_cast<size_t>(value));
+    if (dp_id == 31)
+      this->publish_beep_volume_(value, true);
 
     this->config_pending_ = false;
   }
@@ -1604,6 +1642,25 @@ class GimdowBLELock :
   // ---------------------------------------------------------------------------
   // Incoming Tuya BLE v3 datapoints
   // ---------------------------------------------------------------------------
+
+  void publish_beep_volume_(uint8_t value, bool save) {
+    if (value >= 4)
+      return;
+
+    if (this->beep_volume_select_ != nullptr)
+      this->beep_volume_select_->publish_state(static_cast<size_t>(value));
+
+    if (save && this->beep_volume_select_ != nullptr) {
+      this->beep_volume_pref_.save(&value);
+    }
+
+    ESP_LOGI(
+        TAG,
+        "Beep volume DP31: %u",
+        static_cast<unsigned>(value)
+    );
+  }
+
 
   void publish_battery_state_(uint8_t code) {
     const char *state = "unknown";
@@ -1704,15 +1761,8 @@ class GimdowBLELock :
       ) {
         uint8_t value = data[pos];
 
-        if (dp_id == 31 && this->beep_volume_select_ != nullptr) {
-          if (value < 4)
-            this->beep_volume_select_->publish_state(static_cast<size_t>(value));
-        }
-
-        if (dp_id == 48 && this->lock_direction_select_ != nullptr) {
-          if (value < 2)
-            this->lock_direction_select_->publish_state(static_cast<size_t>(value));
-        }
+        if (dp_id == 31)
+          this->publish_beep_volume_(value, true);
       }
 
       pos += value_len;
@@ -1777,7 +1827,7 @@ class GimdowBLELock :
 
       uint8_t dp_id = data[pos + 1];
 
-      if (dp_id != 9 && dp_id != 31 && dp_id != 48)
+      if (dp_id != 9 && dp_id != 31)
         continue;
 
       uint32_t value_len =
@@ -1791,11 +1841,8 @@ class GimdowBLELock :
         if (dp_id == 9)
           this->publish_battery_state_(value);
 
-        if (dp_id == 31 && this->beep_volume_select_ != nullptr && value < 4)
-          this->beep_volume_select_->publish_state(static_cast<size_t>(value));
-
-        if (dp_id == 48 && this->lock_direction_select_ != nullptr && value < 2)
-          this->lock_direction_select_->publish_state(static_cast<size_t>(value));
+        if (dp_id == 31)
+          this->publish_beep_volume_(value, true);
 
         parsed = true;
       }
@@ -1813,7 +1860,7 @@ class GimdowBLELock :
 
       uint8_t dp_id = data[pos + 3];
 
-      if (dp_id != 9 && dp_id != 31 && dp_id != 48)
+      if (dp_id != 9 && dp_id != 31)
         continue;
 
       uint8_t dp_type = data[pos + 4];
@@ -1828,11 +1875,8 @@ class GimdowBLELock :
         if (dp_id == 9)
           this->publish_battery_state_(value);
 
-        if (dp_id == 31 && this->beep_volume_select_ != nullptr && value < 4)
-          this->beep_volume_select_->publish_state(static_cast<size_t>(value));
-
-        if (dp_id == 48 && this->lock_direction_select_ != nullptr && value < 2)
-          this->lock_direction_select_->publish_state(static_cast<size_t>(value));
+        if (dp_id == 31)
+          this->publish_beep_volume_(value, true);
 
         parsed = true;
       }
@@ -1887,7 +1931,9 @@ class GimdowBLELock :
   binary_sensor::BinarySensor *battery_critical_sensor_{nullptr};
 
   GimdowConfigSelect *beep_volume_select_{nullptr};
-  GimdowConfigSelect *lock_direction_select_{nullptr};
+  ESPPreferenceObject beep_volume_pref_;
+  bool beep_volume_startup_refresh_pending_{false};
+  uint32_t beep_volume_startup_refresh_at_ms_{0};
 
 
   // ---------------------------------------------------------------------------
