@@ -36,6 +36,12 @@ lock:
     tuya_device_id: ${gimdow_device_id}
     ble_unlock_check: ${gimdow_ble_unlock_check}
 
+    # Optional lock configuration.
+    beep_volume:
+      name: "Gimdow Beep Volume"
+    lock_direction:
+      name: "Gimdow Lock Direction"
+
     # Optional battery diagnostics from Tuya DP9.
     battery_state:
       name: "Gimdow Battery State"
