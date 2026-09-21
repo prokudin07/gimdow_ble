@@ -228,10 +228,9 @@ Then reference those values from the device configuration.
 
 ## Lock configuration selects
 
-Both supported profiles expose two Tuya configuration datapoints:
+Both supported profiles expose the Tuya DP31 beep-volume configuration datapoint:
 
 - DP31 — beep volume: `mute`, `low`, `normal`, `high`
-- DP48 — motor/lock direction: `clockwise`, `anticlockwise`
 
 Enable them as optional ESPHome select entities:
 
@@ -249,12 +248,11 @@ lock:
 
     beep_volume:
       name: "Gimdow Beep Volume"
-
-    lock_direction:
-      name: "Gimdow Lock Direction"
 ```
 
-For A1 PRO MAX these are sent as Tuya BLE v3 enum writes. For A1 Ultra they use the FD50/V4 command framing.
+For A1 PRO MAX this is sent as a Tuya BLE v3 enum write. For A1 Ultra it uses the FD50/V4 command framing.
+
+The last known beep-volume value is stored in ESPHome preferences and restored immediately after an ESP reboot. The component also performs one BLE connection shortly after startup so DP31 can be refreshed from the lock when the lock reports its current configuration.
 
 ## Battery diagnostics
 
