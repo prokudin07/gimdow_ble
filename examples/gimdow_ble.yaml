@@ -16,7 +16,6 @@ external_components:
   # Pin production configurations to a version ref.
   - source: github://prokudin07/gimdow_ble@v2.0.0
     components: [ gimdow_ble ]
-    refresh: never
 
 lock:
   - platform: gimdow_ble
