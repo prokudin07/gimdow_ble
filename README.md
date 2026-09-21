@@ -19,6 +19,7 @@ For installed/production devices, pin the component to a version ref instead of 
 
 - `v1.0.0` — original A1 PRO MAX-only component; no `model` option.
 - `v2.0.0` — required `model` option and support for A1 PRO MAX + A1 Ultra.
+- `v2.1.0` — adds battery-state diagnostics from DP9.
 - `main` — development branch and may contain breaking changes.
 
 ESPHome supports a branch or tag after `@` in a GitHub external-component source.
@@ -27,7 +28,7 @@ Recommended:
 
 ```yaml
 external_components:
-  - source: github://prokudin07/gimdow_ble@v2.0.0
+  - source: github://prokudin07/gimdow_ble@v2.1.0
     components: [ gimdow_ble ]
 ```
 
@@ -59,7 +60,7 @@ ble_client:
     auto_connect: false
 
 external_components:
-  - source: github://prokudin07/gimdow_ble@v2.0.0
+  - source: github://prokudin07/gimdow_ble@v2.1.0
     components: [ gimdow_ble ]
 
 lock:
@@ -110,7 +111,7 @@ ble_client:
     auto_connect: false
 
 external_components:
-  - source: github://prokudin07/gimdow_ble@v2.0.0
+  - source: github://prokudin07/gimdow_ble@v2.1.0
     components: [ gimdow_ble ]
 
 lock:
@@ -224,6 +225,52 @@ gimdow_ble_unlock_check: "YOUR_REAL_BLE_UNLOCK_CHECK"
 ```
 
 Then reference those values from the device configuration.
+
+## Battery diagnostics
+
+Both supported jtmspro lock profiles expose Tuya DP9 as a battery-state enum.
+
+The component can publish four optional diagnostic entities:
+
+```yaml
+lock:
+  - platform: gimdow_ble
+    name: Gimdow
+    id: gimdow
+
+    model: a1_pro_max
+    ble_client_id: gimdow_ble_client
+    local_key: ${gimdow_local_key}
+    uuid: ${gimdow_uuid}
+    tuya_device_id: ${gimdow_device_id}
+
+    battery_state:
+      name: "Gimdow Battery State"
+
+    battery_state_code:
+      name: "Gimdow Battery State Code"
+
+    battery_low:
+      name: "Gimdow Battery Low"
+
+    battery_critical:
+      name: "Gimdow Battery Code 3"
+```
+
+Known DP9 mapping from the Tuya-BLE project:
+
+| Raw DP9 code | Published `battery_state` | `battery_low` | `battery_critical` |
+|---:|---|---|---|
+| 0 | `high` | off | off |
+| 1 | `normal` | off | off |
+| 2 | `low` | on | off |
+| 3 | `low` | on | on |
+
+Important: the upstream mapping intentionally maps both raw codes **2 and 3** to `low`. The exact semantic difference between 2 and 3 has not been confirmed for Gimdow. `battery_critical` therefore means specifically **"DP9 raw code is 3"**, not a guaranteed documented Tuya "critical" level.
+
+This is useful for testing the lock's audible low-battery warning: if the lock starts beeping, compare that moment with `battery_state_code`. If it changes to 3, then code 3 can safely be used as the critical/beeping threshold for that particular lock.
+
+The diagnostic entities can be used directly on a Home Assistant dashboard or as triggers for notifications.
 
 ## BLE connection mode
 
