@@ -29,7 +29,6 @@ Recommended:
 external_components:
   - source: github://prokudin07/gimdow_ble@v2.0.0
     components: [ gimdow_ble ]
-    refresh: never
 ```
 
 If an existing device is still using the old configuration and you do not want to migrate it yet:
@@ -38,7 +37,6 @@ If an existing device is still using the old configuration and you do not want t
 external_components:
   - source: github://prokudin07/gimdow_ble@v1.0.0
     components: [ gimdow_ble ]
-    refresh: never
 ```
 
 Do not use `refresh: 0s` with `main` on a production lock unless you deliberately want every new repository change to be pulled into the next compile.
@@ -63,7 +61,6 @@ ble_client:
 external_components:
   - source: github://prokudin07/gimdow_ble@v2.0.0
     components: [ gimdow_ble ]
-    refresh: never
 
 lock:
   - platform: gimdow_ble
@@ -115,7 +112,6 @@ ble_client:
 external_components:
   - source: github://prokudin07/gimdow_ble@v2.0.0
     components: [ gimdow_ble ]
-    refresh: never
 
 lock:
   - platform: gimdow_ble
