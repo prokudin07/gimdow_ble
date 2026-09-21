@@ -1,39 +1,56 @@
 # ESPHome Gimdow BLE
 
-External ESPHome component for direct local BLE control of a **Gimdow A1 PRO MAX** smart lock using the Tuya BLE v3 protocol.
+External ESPHome component for direct local BLE control of supported Gimdow/Tuya smart locks.
 
-Tested with:
-- Gimdow A1 PRO MAX / Tuya product profile `rlyxv7pe`
-- ESPHome 2026.9.0
-- ESP32 using `ble_client`
+## Supported lock profiles
 
-## Features
+| `model` | Tested/product profile | Protocol |
+|---|---|---|
+| `a1_pro_max` | Gimdow A1 PRO MAX / `rlyxv7pe` | Tuya BLE v3, service `0x1910` |
+| `a1_ultra` | Gimdow/Raykube A1 Ultra / `hc7n0urm` | TuyaOS FD50 / V4 |
 
-- Direct local BLE lock/unlock
-- Tuya BLE v3 session setup and pairing
-- Lock command via DP46
-- Unlock command via DP6
-- Lock-state fallback from DP47
-- Optional external binary sensor as the authoritative physical bolt state
-- Compatible with `ble_client.auto_connect: false` so a separate physical BLE remote can still access the lock
+The `model` option is **required** so a firmware update cannot silently switch a lock to a different protocol implementation.
 
-## Installation
+The A1 PRO MAX profile has been tested directly with this ESPHome component. The A1 Ultra profile is based on physically verified FD50/V4 lock and unlock traffic from the Tuya-BLE project, but should still be considered experimental in this ESPHome port until tested on real Gimdow Ultra hardware.
+
+## Versioning
+
+For installed/production devices, pin the component to a version ref instead of following `main`.
+
+- `v1.0.0` — original A1 PRO MAX-only component; no `model` option.
+- `v2.0.0` — required `model` option and support for A1 PRO MAX + A1 Ultra.
+- `main` — development branch and may contain breaking changes.
+
+ESPHome supports a branch or tag after `@` in a GitHub external-component source.
+
+Recommended:
 
 ```yaml
 external_components:
-  - source: github://prokudin07/gimdow_ble
+  - source: github://prokudin07/gimdow_ble@v2.0.0
     components: [ gimdow_ble ]
-    refresh: 0s
+    refresh: never
 ```
 
-## Basic example
+If an existing device is still using the old configuration and you do not want to migrate it yet:
+
+```yaml
+external_components:
+  - source: github://prokudin07/gimdow_ble@v1.0.0
+    components: [ gimdow_ble ]
+    refresh: never
+```
+
+Do not use `refresh: 0s` with `main` on a production lock unless you deliberately want every new repository change to be pulled into the next compile.
+
+## A1 PRO MAX example
 
 ```yaml
 substitutions:
   # Replace these values with the ones from your own lock.
   gimdow_local_key: "YOUR_LOCAL_KEY"
   gimdow_mac: "AA:BB:CC:DD:EE:FF"
-  gimdow_uuid: ${gimdow_uuid}
+  gimdow_uuid: "YOUR_TUYA_UUID"
   gimdow_device_id: "YOUR_TUYA_DEVICE_ID"
 
 esp32_ble_tracker:
@@ -44,79 +61,116 @@ ble_client:
     auto_connect: false
 
 external_components:
-  - source: github://prokudin07/gimdow_ble
+  - source: github://prokudin07/gimdow_ble@v2.0.0
     components: [ gimdow_ble ]
-    refresh: 0s
+    refresh: never
 
 lock:
   - platform: gimdow_ble
     name: Gimdow
     id: gimdow
 
+    model: a1_pro_max
+
     ble_client_id: gimdow_ble_client
 
     local_key: ${gimdow_local_key}
     uuid: ${gimdow_uuid}
     tuya_device_id: ${gimdow_device_id}
+
+    # Optional authoritative physical bolt sensor.
+    # ON = UNLOCKED, OFF = LOCKED.
+    # state_sensor: Lock_sensor
 ```
 
-## Optional physical bolt-state sensor
+### A1 PRO MAX protocol
 
-If the lock can also be operated by another BLE remote, the Tuya DP state may not always be updated through this ESP32 connection. You can therefore provide an existing ESPHome binary sensor as the authoritative lock state:
+- Service: `0x1910`
+- Notify: `0x2B10`
+- Write: `0x2B11`
+- Unlock: DP6 = true
+- Lock: DP46 = true
+- State fallback: DP47, true = unlocked, false = locked
+
+## A1 Ultra example
+
+A1 Ultra requires one additional device-specific value, `ble_unlock_check`, for remote unlock.
 
 ```yaml
+substitutions:
+  # Replace these values with the ones from your own lock.
+  gimdow_local_key: "YOUR_LOCAL_KEY"
+  gimdow_mac: "AA:BB:CC:DD:EE:FF"
+  gimdow_uuid: "YOUR_TUYA_UUID"
+  gimdow_device_id: "YOUR_TUYA_DEVICE_ID"
+  gimdow_ble_unlock_check: "YOUR_BLE_UNLOCK_CHECK"
+
+esp32_ble_tracker:
+
+ble_client:
+  - mac_address: ${gimdow_mac}
+    id: gimdow_ble_client
+    auto_connect: false
+
+external_components:
+  - source: github://prokudin07/gimdow_ble@v2.0.0
+    components: [ gimdow_ble ]
+    refresh: never
+
 lock:
   - platform: gimdow_ble
-    name: Gimdow
-    id: gimdow
+    name: Gimdow Ultra
+    id: gimdow_ultra
+
+    model: a1_ultra
 
     ble_client_id: gimdow_ble_client
+
     local_key: ${gimdow_local_key}
     uuid: ${gimdow_uuid}
     tuya_device_id: ${gimdow_device_id}
+    ble_unlock_check: ${gimdow_ble_unlock_check}
 
-    state_sensor: Lock_sensor
+    # Optional authoritative physical bolt sensor.
+    # ON = UNLOCKED, OFF = LOCKED.
+    # state_sensor: Lock_sensor
 ```
 
-For the current implementation:
-- external sensor `ON` = unlocked
-- external sensor `OFF` = locked
+If `model: a1_ultra` is selected without `ble_unlock_check`, ESPHome configuration validation fails intentionally.
 
-When `state_sensor` is configured, DP47 and optimistic command-state publishing do not overwrite the external physical state.
+### A1 Ultra protocol
 
-## BLE connection mode
-
-If you also use the original physical BLE remote, use:
-
-```yaml
-auto_connect: false
-```
-
-The component will connect on demand when Home Assistant sends a lock/unlock command.
-
-If the ESP32 is the only BLE controller and minimum latency matters, `auto_connect: true` can be used, but it may prevent another BLE remote from connecting while the ESP32 holds the connection.
+- Product profile observed: `hc7n0urm`
+- Service: `0000fd50-0000-1000-8000-00805f9b34fb`
+- Write: `00000001-0000-1001-8001-00805f9b07d0`
+- Notify: `00000002-0000-1001-8001-00805f9b07d0`
+- DEVICE_INFO payload: `00 f3`
+- DEVICE_INFO packet marker: `0x20`
+- DEVICE_INFO is sent in one larger ATT write after MTU negotiation
+- V4 command: `FUN_SENDER_DPS_V4 = 0x0027`
+- Lock: `manual_lock` / DP46 in V4 framing
+- Unlock: V4 payload built from the device-specific `ble_unlock_check`
 
 ## Required Tuya values
 
-The component requires four device-specific values:
+The common parameters are:
 
 | ESPHome option | What it is | Where to get it |
 |---|---|---|
-| `mac_address` / `gimdow_mac` | BLE MAC address of the lock | Tuya Smart / Smart Life app → device information |
-| `tuya_device_id` | Tuya device ID | In the mobile app this is shown as **Virtual ID** |
-| `uuid` | Tuya BLE UUID used during pairing | Tuya cloud device information / API |
-| `local_key` | Local Tuya encryption key | Tuya cloud device information / API |
+| `mac_address` / `gimdow_mac` | BLE MAC address | Tuya Smart / Smart Life device information |
+| `tuya_device_id` | Tuya device ID | Shown as **Virtual ID** in the app |
+| `uuid` | Tuya BLE UUID | Tuya Cloud/OpenAPI device information |
+| `local_key` | Local Tuya encryption key | Tuya Cloud/OpenAPI or TinyTuya |
+| `ble_unlock_check` | A1 Ultra unlock check payload | Tuya Cloud/OpenAPI device status, code `ble_unlock_check` |
 
-### 1. BLE MAC address and Tuya device ID from the mobile app
+### MAC and Virtual ID from the mobile app
 
-The easiest two values can be read directly from the **Tuya Smart / Smart Life** application.
-
-Open the lock and go to its device information page. Depending on the application version, the menu may be named **Device Information**, **Device Info** or similar.
+Open the lock in **Tuya Smart / Smart Life** and open its device information page.
 
 Look for:
 
-- **MAC** — use this as the ESPHome BLE address.
-- **Virtual ID** — use this as `tuya_device_id`.
+- **MAC** — use as the ESPHome BLE address.
+- **Virtual ID** — use as `tuya_device_id`.
 
 ![Tuya Smart / Smart Life device information showing Virtual ID and MAC](images/tuya-device-info.svg)
 
@@ -127,59 +181,13 @@ Virtual ID: bf59ffwdyww949lh
 MAC:        DC:23:4E:D1:FC:AD
 ```
 
-ESPHome:
+These are examples only. Use the values from your own lock.
 
-```yaml
-substitutions:
-  gimdow_mac: "DC:23:4E:D1:FC:AD"
+### UUID and local_key
 
-ble_client:
-  - mac_address: ${gimdow_mac}
-    id: gimdow_ble_client
-    auto_connect: false
+Link the Tuya Smart / Smart Life account to a Tuya IoT Cloud project, find the device by its Virtual ID / Device ID, and read the device information through Tuya Cloud/OpenAPI.
 
-lock:
-  - platform: gimdow_ble
-    ...
-    tuya_device_id: "bf59ffwdyww949lh"
-```
-
-> The values above are only an example. Use the values shown for your own lock.
-
-### 2. Getting UUID and local_key from Tuya IoT Platform
-
-The mobile application normally does not display `uuid` or `local_key`. They can be obtained through a Tuya cloud project linked to the same Tuya Smart / Smart Life account.
-
-General procedure:
-
-1. Sign in to **Tuya IoT Platform**.
-2. Create or open a Cloud project.
-3. Link the mobile-app account that contains the lock.
-4. Open the list of linked devices.
-5. Find the Gimdow lock by its **Virtual ID / Device ID**.
-6. Open the device details or query the device through the Tuya API.
-7. Record:
-   - device ID
-   - UUID
-   - local key
-   - MAC address, if shown
-
-For the tested lock the values have this form:
-
-```text
-Device ID:  bf59ffwdyww949lh
-UUID:       3fcb877db8ad5e04
-Local key:  <device-specific secret>
-MAC:        DC:23:4E:D1:FC:AD
-```
-
-Do not copy these example identifiers to another lock. Every device has its own values.
-
-### 3. Getting local_key with TinyTuya
-
-If you prefer not to copy values manually from the Tuya web interface, **TinyTuya** can query the Tuya cloud account and produce a device list containing identifiers and local keys.
-
-Typical workflow:
+TinyTuya can also retrieve the common Tuya device credentials:
 
 ```bash
 python3 -m venv venv
@@ -188,45 +196,60 @@ pip install tinytuya
 python -m tinytuya wizard
 ```
 
-The wizard asks for Tuya cloud project credentials and then retrieves the devices linked to that project.
+### A1 Ultra: ble_unlock_check
 
-Find the record matching the lock's **Virtual ID / Device ID** and copy its `local_key`.
+For A1 Ultra, query the device status through Tuya IoT OpenAPI and find the status item:
 
-TinyTuya still uses the Tuya cloud API, so the Tuya account/cloud project must be linked correctly.
+```json
+{
+  "code": "ble_unlock_check",
+  "value": "BASE64_DEVICE_SPECIFIC_VALUE"
+}
+```
 
-### 4. Store local_key as a secret
+Use the complete raw base64 string from `value`:
 
-Do **not** publish the real `local_key` in GitHub or a public YAML file.
+```yaml
+gimdow_ble_unlock_check: "BASE64_DEVICE_SPECIFIC_VALUE"
+```
 
-Recommended ESPHome configuration:
+This value is device-specific. Without it, the A1 Ultra remote-unlock payload cannot be built.
+
+## Secrets
+
+Do not publish a real `local_key` or `ble_unlock_check` in a public repository.
+
+Recommended:
 
 ```yaml
 # secrets.yaml
 gimdow_local_key: "YOUR_REAL_LOCAL_KEY"
+gimdow_ble_unlock_check: "YOUR_REAL_BLE_UNLOCK_CHECK"
 ```
 
-and:
+Then reference those values from the device configuration.
+
+## BLE connection mode
+
+If the original physical BLE remote must also be able to connect, use:
 
 ```yaml
-substitutions:
-  gimdow_local_key: !secret gimdow_local_key
+auto_connect: false
 ```
 
-Then use it in the component:
+The component connects on demand for a Home Assistant lock/unlock command.
 
-```yaml
-lock:
-  - platform: gimdow_ble
-    name: Gimdow
-    id: gimdow
+If ESP32 is the only BLE controller and minimum latency matters, `auto_connect: true` may be used, but a persistent ESP32 connection can prevent another BLE remote from connecting.
 
-    ble_client_id: gimdow_ble_client
+## Optional physical state sensor
 
-    local_key: ${gimdow_local_key}
-    uuid: ${gimdow_uuid}
-    tuya_device_id: ${gimdow_device_id}
-```
+If `state_sensor` is configured, that sensor is authoritative:
 
-## Status
+- sensor ON = unlocked
+- sensor OFF = locked
 
-This is an experimental external component developed and tested against a specific Gimdow A1 PRO MAX / `rlyxv7pe` lock. Other Tuya BLE locks may use different datapoints or protocol behavior.
+Protocol-reported state and optimistic state changes do not overwrite the external physical state.
+
+## Credits / protocol reference
+
+The A1 Ultra / `hc7n0urm` FD50 implementation was derived from the reverse-engineered and physically verified protocol work in the ShonP40/Tuya-BLE project, especially its Raykube A1 Ultra FD50 documentation and implementation.
