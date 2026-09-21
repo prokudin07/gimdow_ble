@@ -2,7 +2,7 @@ substitutions:
   # Replace these values with the ones from your own lock.
   gimdow_local_key: "YOUR_LOCAL_KEY"
   gimdow_mac: "AA:BB:CC:DD:EE:FF"
-  gimdow_uuid: ${gimdow_uuid}
+  gimdow_uuid: "YOUR_TUYA_UUID"
   gimdow_device_id: "YOUR_TUYA_DEVICE_ID"
 
 esp32_ble_tracker:
@@ -13,21 +13,25 @@ ble_client:
     auto_connect: false
 
 external_components:
-  - source: github://prokudin07/gimdow_ble
+  # Pin production configurations to a version ref.
+  - source: github://prokudin07/gimdow_ble@v2.0.0
     components: [ gimdow_ble ]
-    refresh: 0s
+    refresh: never
 
 lock:
   - platform: gimdow_ble
     name: Gimdow
     id: gimdow
 
+    # Required lock profile.
+    model: a1_pro_max
+
     ble_client_id: gimdow_ble_client
 
     local_key: ${gimdow_local_key}
-    uuid: "YOUR_TUYA_UUID"
+    uuid: ${gimdow_uuid}
     tuya_device_id: ${gimdow_device_id}
 
     # Optional external binary sensor of the physical bolt state.
-    # For this component: ON = UNLOCKED, OFF = LOCKED.
+    # ON = UNLOCKED, OFF = LOCKED.
     # state_sensor: Lock_sensor
