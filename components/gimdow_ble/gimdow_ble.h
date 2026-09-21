@@ -15,6 +15,7 @@
 #include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/sensor/sensor.h"
 #include "esphome/components/text_sensor/text_sensor.h"
+#include "esphome/components/select/select.h"
 
 #include <esp_gatt_common_api.h>
 #include <esp_gattc_api.h>
@@ -118,6 +119,21 @@ inline uint32_t get_u32_be(const uint8_t *p) {
 }
 
 
+class GimdowBLELock;
+
+class GimdowConfigSelect : public select::Select {
+ public:
+  void set_parent(GimdowBLELock *parent) { this->parent_ = parent; }
+  void set_dp_id(uint8_t dp_id) { this->dp_id_ = dp_id; }
+
+ protected:
+  void control(size_t index) override;
+
+  GimdowBLELock *parent_{nullptr};
+  uint8_t dp_id_{0};
+};
+
+
 class GimdowBLELock :
     public lock::Lock,
     public ble_client::BLEClientNode,
@@ -186,6 +202,37 @@ class GimdowBLELock :
 
   void set_battery_critical_sensor(binary_sensor::BinarySensor *sensor) {
     this->battery_critical_sensor_ = sensor;
+  }
+
+  void set_beep_volume_select(GimdowConfigSelect *select) {
+    this->beep_volume_select_ = select;
+  }
+
+  void set_lock_direction_select(GimdowConfigSelect *select) {
+    this->lock_direction_select_ = select;
+  }
+
+  void request_config_enum(uint8_t dp_id, uint8_t value) {
+    this->pending_config_dp_ = dp_id;
+    this->pending_config_value_ = value;
+    this->config_pending_ = true;
+
+    ESP_LOGI(
+        TAG,
+        "Requested config DP%u = %u",
+        static_cast<unsigned>(dp_id),
+        static_cast<unsigned>(value)
+    );
+
+    if (this->paired_ && this->session_key_valid_) {
+      this->send_pending_config_();
+      return;
+    }
+
+    if (this->ble_parent_ != nullptr) {
+      ESP_LOGD(TAG, "Connecting to Gimdow for config write...");
+      this->ble_parent_->connect();
+    }
   }
 
 
@@ -1265,6 +1312,10 @@ class GimdowBLELock :
         if (this->command_pending_) {
           this->send_pending_command_();
         }
+
+        if (this->config_pending_) {
+          this->send_pending_config_();
+        }
       } else {
         ESP_LOGE(
             TAG,
@@ -1504,6 +1555,52 @@ class GimdowBLELock :
   }
 
 
+  void send_pending_config_() {
+    if (!this->config_pending_)
+      return;
+
+    uint8_t dp_id = this->pending_config_dp_;
+    uint8_t value = this->pending_config_value_;
+
+    if (this->model_ == GimdowModel::A1_ULTRA) {
+      std::vector<uint8_t> payload = {
+          0x00, 0x00, 0x00, 0x00,
+          0x01,
+          dp_id,
+          0x00, 0x00, 0x01,
+          value
+      };
+
+      this->send_packet_(
+          FUN_SENDER_DPS_V4,
+          payload,
+          0
+      );
+    } else {
+      std::vector<uint8_t> payload = {
+          dp_id,
+          0x04,
+          0x01,
+          value
+      };
+
+      this->send_packet_(
+          FUN_SENDER_DPS,
+          payload,
+          0
+      );
+    }
+
+    if (dp_id == 31 && this->beep_volume_select_ != nullptr)
+      this->beep_volume_select_->publish_state(static_cast<size_t>(value));
+
+    if (dp_id == 48 && this->lock_direction_select_ != nullptr)
+      this->lock_direction_select_->publish_state(static_cast<size_t>(value));
+
+    this->config_pending_ = false;
+  }
+
+
   // ---------------------------------------------------------------------------
   // Incoming Tuya BLE v3 datapoints
   // ---------------------------------------------------------------------------
@@ -1601,6 +1698,23 @@ class GimdowBLELock :
         this->publish_battery_state_(data[pos]);
       }
 
+      if (
+          type == 0x04 &&
+          value_len == 1
+      ) {
+        uint8_t value = data[pos];
+
+        if (dp_id == 31 && this->beep_volume_select_ != nullptr) {
+          if (value < 4)
+            this->beep_volume_select_->publish_state(static_cast<size_t>(value));
+        }
+
+        if (dp_id == 48 && this->lock_direction_select_ != nullptr) {
+          if (value < 2)
+            this->lock_direction_select_->publish_state(static_cast<size_t>(value));
+        }
+      }
+
       pos += value_len;
     }
   }
@@ -1658,7 +1772,12 @@ class GimdowBLELock :
     //   01 <dp_id> <len:3> <value:len>
     // DP9 is battery_state enum.
     for (size_t pos = 0; pos + 6 <= len; pos++) {
-      if (data[pos] != 0x01 || data[pos + 1] != 0x09)
+      if (data[pos] != 0x01)
+        continue;
+
+      uint8_t dp_id = data[pos + 1];
+
+      if (dp_id != 9 && dp_id != 31 && dp_id != 48)
         continue;
 
       uint32_t value_len =
@@ -1667,7 +1786,17 @@ class GimdowBLELock :
           static_cast<uint32_t>(data[pos + 4]);
 
       if (value_len == 1 && pos + 6 <= len) {
-        this->publish_battery_state_(data[pos + 5]);
+        uint8_t value = data[pos + 5];
+
+        if (dp_id == 9)
+          this->publish_battery_state_(value);
+
+        if (dp_id == 31 && this->beep_volume_select_ != nullptr && value < 4)
+          this->beep_volume_select_->publish_state(static_cast<size_t>(value));
+
+        if (dp_id == 48 && this->lock_direction_select_ != nullptr && value < 2)
+          this->lock_direction_select_->publish_state(static_cast<size_t>(value));
+
         parsed = true;
       }
     }
@@ -1677,11 +1806,15 @@ class GimdowBLELock :
     for (size_t pos = 0; pos + 8 <= len; pos++) {
       if (
           data[pos + 1] != 0x00 ||
-          data[pos + 2] != 0x00 ||
-          data[pos + 3] != 0x09
+          data[pos + 2] != 0x00
       ) {
         continue;
       }
+
+      uint8_t dp_id = data[pos + 3];
+
+      if (dp_id != 9 && dp_id != 31 && dp_id != 48)
+        continue;
 
       uint8_t dp_type = data[pos + 4];
       uint16_t value_len = get_u16_be(data + pos + 5);
@@ -1690,7 +1823,17 @@ class GimdowBLELock :
           dp_type == 0x04 &&
           value_len == 1
       ) {
-        this->publish_battery_state_(data[pos + 7]);
+        uint8_t value = data[pos + 7];
+
+        if (dp_id == 9)
+          this->publish_battery_state_(value);
+
+        if (dp_id == 31 && this->beep_volume_select_ != nullptr && value < 4)
+          this->beep_volume_select_->publish_state(static_cast<size_t>(value));
+
+        if (dp_id == 48 && this->lock_direction_select_ != nullptr && value < 2)
+          this->lock_direction_select_->publish_state(static_cast<size_t>(value));
+
         parsed = true;
       }
     }
@@ -1742,6 +1885,9 @@ class GimdowBLELock :
   sensor::Sensor *battery_state_code_sensor_{nullptr};
   binary_sensor::BinarySensor *battery_low_sensor_{nullptr};
   binary_sensor::BinarySensor *battery_critical_sensor_{nullptr};
+
+  GimdowConfigSelect *beep_volume_select_{nullptr};
+  GimdowConfigSelect *lock_direction_select_{nullptr};
 
 
   // ---------------------------------------------------------------------------
@@ -1798,10 +1944,25 @@ class GimdowBLELock :
   bool command_pending_{false};
   uint8_t pending_dp_{0};
 
+  bool config_pending_{false};
+  uint8_t pending_config_dp_{0};
+  uint8_t pending_config_value_{0};
+
   lock::LockState pending_lock_state_{
       lock::LOCK_STATE_NONE
   };
 };
+
+
+inline void GimdowConfigSelect::control(size_t index) {
+  if (this->parent_ == nullptr)
+    return;
+
+  this->parent_->request_config_enum(
+      this->dp_id_,
+      static_cast<uint8_t>(index)
+  );
+}
 
 
 }  // namespace gimdow_ble
