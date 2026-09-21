@@ -13,6 +13,8 @@
 #include "esphome/components/lock/lock.h"
 #include "esphome/components/ble_client/ble_client.h"
 #include "esphome/components/binary_sensor/binary_sensor.h"
+#include "esphome/components/sensor/sensor.h"
+#include "esphome/components/text_sensor/text_sensor.h"
 
 #include <esp_gatt_common_api.h>
 #include <esp_gattc_api.h>
@@ -168,6 +170,22 @@ class GimdowBLELock :
               : lock::LOCK_STATE_LOCKED
       );
     });
+  }
+
+  void set_battery_state_sensor(text_sensor::TextSensor *sensor) {
+    this->battery_state_sensor_ = sensor;
+  }
+
+  void set_battery_state_code_sensor(sensor::Sensor *sensor) {
+    this->battery_state_code_sensor_ = sensor;
+  }
+
+  void set_battery_low_sensor(binary_sensor::BinarySensor *sensor) {
+    this->battery_low_sensor_ = sensor;
+  }
+
+  void set_battery_critical_sensor(binary_sensor::BinarySensor *sensor) {
+    this->battery_critical_sensor_ = sensor;
   }
 
 
@@ -1490,6 +1508,52 @@ class GimdowBLELock :
   // Incoming Tuya BLE v3 datapoints
   // ---------------------------------------------------------------------------
 
+  void publish_battery_state_(uint8_t code) {
+    const char *state = "unknown";
+
+    switch (code) {
+      case 0:
+        state = "high";
+        break;
+      case 1:
+        state = "normal";
+        break;
+      case 2:
+      case 3:
+        state = "low";
+        break;
+      default:
+        break;
+    }
+
+    ESP_LOGI(
+        TAG,
+        "Battery state DP9: code=%u state=%s",
+        static_cast<unsigned>(code),
+        state
+    );
+
+    if (this->battery_state_sensor_ != nullptr)
+      this->battery_state_sensor_->publish_state(state);
+
+    if (this->battery_state_code_sensor_ != nullptr)
+      this->battery_state_code_sensor_->publish_state(code);
+
+    if (this->battery_low_sensor_ != nullptr)
+      this->battery_low_sensor_->publish_state(code >= 2 && code <= 3);
+
+    // Tuya-BLE maps both codes 2 and 3 to "low". We expose code 3
+    // separately so it can be observed/verified as the lock's deepest
+    // low-battery state (for example, the state where the lock starts beeping).
+    if (this->battery_critical_sensor_ != nullptr)
+      this->battery_critical_sensor_->publish_state(code == 3);
+  }
+
+
+  // ---------------------------------------------------------------------------
+  // Incoming Tuya BLE v3 datapoints
+  // ---------------------------------------------------------------------------
+
   void parse_datapoints_v3_(
       const uint8_t *data,
       size_t len
@@ -1527,6 +1591,16 @@ class GimdowBLELock :
         }
       }
 
+      // DP9 is battery_state on both supported jtmspro profiles.
+      // Tuya enum type = 0x04.
+      if (
+          dp_id == 9 &&
+          type == 0x04 &&
+          value_len == 1
+      ) {
+        this->publish_battery_state_(data[pos]);
+      }
+
       pos += value_len;
     }
   }
@@ -1540,6 +1614,8 @@ class GimdowBLELock :
       const uint8_t *data,
       size_t len
   ) {
+    bool parsed = false;
+
     // Observed passive physical-state event:
     // <id:1> <flags:3=0x00002F> <type:1=BOOL> <len:2=1> <value:1>
     // true  = open/unlocked
@@ -1556,8 +1632,7 @@ class GimdowBLELock :
       if (
           flags == 0x00002F &&
           type == 0x01 &&
-          value_len == 1 &&
-          pos + 8 <= len
+          value_len == 1
       ) {
         bool value = data[pos + 7] != 0;
 
@@ -1575,11 +1650,53 @@ class GimdowBLELock :
           );
         }
 
-        return;
+        parsed = true;
       }
     }
 
-    ESP_LOGD(TAG, "RX A1 Ultra V4 payload without known state event");
+    // Raykube/TuyaOS FD50 command-style status:
+    //   01 <dp_id> <len:3> <value:len>
+    // DP9 is battery_state enum.
+    for (size_t pos = 0; pos + 6 <= len; pos++) {
+      if (data[pos] != 0x01 || data[pos + 1] != 0x09)
+        continue;
+
+      uint32_t value_len =
+          (static_cast<uint32_t>(data[pos + 2]) << 16) |
+          (static_cast<uint32_t>(data[pos + 3]) << 8) |
+          static_cast<uint32_t>(data[pos + 4]);
+
+      if (value_len == 1 && pos + 6 <= len) {
+        this->publish_battery_state_(data[pos + 5]);
+        parsed = true;
+      }
+    }
+
+    // Raykube event-style typed status:
+    //   <event> 00 00 <dp_id> <dp_type> <len:2> <value:len>
+    for (size_t pos = 0; pos + 8 <= len; pos++) {
+      if (
+          data[pos + 1] != 0x00 ||
+          data[pos + 2] != 0x00 ||
+          data[pos + 3] != 0x09
+      ) {
+        continue;
+      }
+
+      uint8_t dp_type = data[pos + 4];
+      uint16_t value_len = get_u16_be(data + pos + 5);
+
+      if (
+          dp_type == 0x04 &&
+          value_len == 1
+      ) {
+        this->publish_battery_state_(data[pos + 7]);
+        parsed = true;
+      }
+    }
+
+    if (!parsed)
+      ESP_LOGD(TAG, "RX A1 Ultra V4 payload without known state/battery event");
   }
 
 
@@ -1620,6 +1737,11 @@ class GimdowBLELock :
 
   binary_sensor::BinarySensor *state_sensor_{nullptr};
   bool external_state_initialized_{false};
+
+  text_sensor::TextSensor *battery_state_sensor_{nullptr};
+  sensor::Sensor *battery_state_code_sensor_{nullptr};
+  binary_sensor::BinarySensor *battery_low_sensor_{nullptr};
+  binary_sensor::BinarySensor *battery_critical_sensor_{nullptr};
 
 
   // ---------------------------------------------------------------------------
