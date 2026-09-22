@@ -273,10 +273,10 @@ lock:
     tuya_device_id: ${gimdow_device_id}
 
     battery_level:
-      name: "Уровень заряда"
+      name: "Gimdow Battery Level"
 
     battery_critical:
-      name: "Критический уровень заряда"
+      name: "Gimdow Battery Critical"
 ```
 
 DP9 mapping:
