@@ -42,9 +42,9 @@ lock:
 
     # Optional battery diagnostics from Tuya DP9.
     battery_level:
-      name: "Уровень заряда"
+      name: "Gimdow Battery Level"
     battery_critical:
-      name: "Критический уровень заряда"
+      name: "Gimdow Battery Critical"
 
     # Optional external binary sensor of the physical bolt state.
     # ON = UNLOCKED, OFF = LOCKED.
