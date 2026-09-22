@@ -15,7 +15,6 @@
 #include "esphome/components/lock/lock.h"
 #include "esphome/components/ble_client/ble_client.h"
 #include "esphome/components/binary_sensor/binary_sensor.h"
-#include "esphome/components/sensor/sensor.h"
 #include "esphome/components/text_sensor/text_sensor.h"
 #include "esphome/components/select/select.h"
 
@@ -190,16 +189,8 @@ class GimdowBLELock :
     });
   }
 
-  void set_battery_state_sensor(text_sensor::TextSensor *sensor) {
-    this->battery_state_sensor_ = sensor;
-  }
-
-  void set_battery_state_code_sensor(sensor::Sensor *sensor) {
-    this->battery_state_code_sensor_ = sensor;
-  }
-
-  void set_battery_low_sensor(binary_sensor::BinarySensor *sensor) {
-    this->battery_low_sensor_ = sensor;
+  void set_battery_level_sensor(text_sensor::TextSensor *sensor) {
+    this->battery_level_sensor_ = sensor;
   }
 
   void set_battery_critical_sensor(binary_sensor::BinarySensor *sensor) {
@@ -1662,7 +1653,7 @@ class GimdowBLELock :
   }
 
 
-  void publish_battery_state_(uint8_t code) {
+  void publish_battery_level_(uint8_t code) {
     const char *state = "unknown";
 
     switch (code) {
@@ -1682,23 +1673,16 @@ class GimdowBLELock :
 
     ESP_LOGI(
         TAG,
-        "Battery state DP9: code=%u state=%s",
+        "Battery level DP9: code=%u level=%s",
         static_cast<unsigned>(code),
         state
     );
 
-    if (this->battery_state_sensor_ != nullptr)
-      this->battery_state_sensor_->publish_state(state);
+    if (this->battery_level_sensor_ != nullptr)
+      this->battery_level_sensor_->publish_state(state);
 
-    if (this->battery_state_code_sensor_ != nullptr)
-      this->battery_state_code_sensor_->publish_state(code);
-
-    if (this->battery_low_sensor_ != nullptr)
-      this->battery_low_sensor_->publish_state(code >= 2 && code <= 3);
-
-    // Tuya-BLE maps both codes 2 and 3 to "low". We expose code 3
-    // separately so it can be observed/verified as the lock's deepest
-    // low-battery state (for example, the state where the lock starts beeping).
+    // Raw DP9 code 3 is exposed as a dedicated critical-low flag.
+    // true = critical battery level.
     if (this->battery_critical_sensor_ != nullptr)
       this->battery_critical_sensor_->publish_state(code == 3);
   }
@@ -1752,7 +1736,7 @@ class GimdowBLELock :
           type == 0x04 &&
           value_len == 1
       ) {
-        this->publish_battery_state_(data[pos]);
+        this->publish_battery_level_(data[pos]);
       }
 
       if (
@@ -1839,7 +1823,7 @@ class GimdowBLELock :
         uint8_t value = data[pos + 5];
 
         if (dp_id == 9)
-          this->publish_battery_state_(value);
+          this->publish_battery_level_(value);
 
         if (dp_id == 31)
           this->publish_beep_volume_(value, true);
@@ -1873,7 +1857,7 @@ class GimdowBLELock :
         uint8_t value = data[pos + 7];
 
         if (dp_id == 9)
-          this->publish_battery_state_(value);
+          this->publish_battery_level_(value);
 
         if (dp_id == 31)
           this->publish_beep_volume_(value, true);
@@ -1925,9 +1909,7 @@ class GimdowBLELock :
   binary_sensor::BinarySensor *state_sensor_{nullptr};
   bool external_state_initialized_{false};
 
-  text_sensor::TextSensor *battery_state_sensor_{nullptr};
-  sensor::Sensor *battery_state_code_sensor_{nullptr};
-  binary_sensor::BinarySensor *battery_low_sensor_{nullptr};
+  text_sensor::TextSensor *battery_level_sensor_{nullptr};
   binary_sensor::BinarySensor *battery_critical_sensor_{nullptr};
 
   GimdowConfigSelect *beep_volume_select_{nullptr};
