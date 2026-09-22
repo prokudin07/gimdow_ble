@@ -36,14 +36,10 @@ lock:
       name: "Gimdow Beep Volume"
 
     # Optional battery diagnostics from Tuya DP9.
-    battery_state:
-      name: "Gimdow Battery State"
-    battery_state_code:
-      name: "Gimdow Battery State Code"
-    battery_low:
-      name: "Gimdow Battery Low"
+    battery_level:
+      name: "Уровень заряда"
     battery_critical:
-      name: "Gimdow Battery Code 3"
+      name: "Критический уровень заряда"
 
     # Optional external binary sensor of the physical bolt state.
     # ON = UNLOCKED, OFF = LOCKED.
