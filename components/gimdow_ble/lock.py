@@ -5,7 +5,6 @@ from esphome.components import (
     lock,
     ble_client,
     binary_sensor,
-    sensor,
     text_sensor,
     select,
 )
@@ -13,7 +12,7 @@ from esphome.components.ble_client import CONF_BLE_CLIENT_ID
 from esphome.const import CONF_ID
 
 DEPENDENCIES = ["ble_client"]
-AUTO_LOAD = ["lock", "binary_sensor", "sensor", "text_sensor", "select"]
+AUTO_LOAD = ["lock", "binary_sensor", "text_sensor", "select"]
 
 gimdow_ble_ns = cg.esphome_ns.namespace("gimdow_ble")
 
@@ -36,9 +35,7 @@ CONF_DEVICE_ID = "tuya_device_id"
 CONF_BLE_UNLOCK_CHECK = "ble_unlock_check"
 CONF_STATE_SENSOR = "state_sensor"
 
-CONF_BATTERY_STATE = "battery_state"
-CONF_BATTERY_STATE_CODE = "battery_state_code"
-CONF_BATTERY_LOW = "battery_low"
+CONF_BATTERY_LEVEL = "battery_level"
 CONF_BATTERY_CRITICAL = "battery_critical"
 CONF_BEEP_VOLUME = "beep_volume"
 
@@ -74,11 +71,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_STATE_SENSOR): cv.use_id(
                 binary_sensor.BinarySensor
             ),
-            cv.Optional(CONF_BATTERY_STATE): text_sensor.text_sensor_schema(),
-            cv.Optional(CONF_BATTERY_STATE_CODE): sensor.sensor_schema(
-                accuracy_decimals=0,
-            ),
-            cv.Optional(CONF_BATTERY_LOW): binary_sensor.binary_sensor_schema(),
+            cv.Optional(CONF_BATTERY_LEVEL): text_sensor.text_sensor_schema(),
             cv.Optional(CONF_BATTERY_CRITICAL): binary_sensor.binary_sensor_schema(),
             cv.Optional(CONF_BEEP_VOLUME): select.select_schema(GimdowConfigSelect),
         }
@@ -111,23 +104,11 @@ async def to_code(config):
         state_sensor = await cg.get_variable(config[CONF_STATE_SENSOR])
         cg.add(var.set_state_sensor(state_sensor))
 
-    if CONF_BATTERY_STATE in config:
-        battery_state = await text_sensor.new_text_sensor(
-            config[CONF_BATTERY_STATE]
+    if CONF_BATTERY_LEVEL in config:
+        battery_level = await text_sensor.new_text_sensor(
+            config[CONF_BATTERY_LEVEL]
         )
-        cg.add(var.set_battery_state_sensor(battery_state))
-
-    if CONF_BATTERY_STATE_CODE in config:
-        battery_state_code = await sensor.new_sensor(
-            config[CONF_BATTERY_STATE_CODE]
-        )
-        cg.add(var.set_battery_state_code_sensor(battery_state_code))
-
-    if CONF_BATTERY_LOW in config:
-        battery_low = await binary_sensor.new_binary_sensor(
-            config[CONF_BATTERY_LOW]
-        )
-        cg.add(var.set_battery_low_sensor(battery_low))
+        cg.add(var.set_battery_level_sensor(battery_level))
 
     if CONF_BATTERY_CRITICAL in config:
         battery_critical = await binary_sensor.new_binary_sensor(
