@@ -201,6 +201,22 @@ class GimdowBLELock :
     this->beep_volume_select_ = select;
   }
 
+  void connect_ble_(const char *reason) {
+    if (this->ble_parent_ == nullptr)
+      return;
+
+    // A1 Ultra / hc7n0urm advertises with a RANDOM BLE address type.
+    // With auto_connect: false ESPHome does not parse the advertisement into
+    // BLEClientBase, so its remote address type otherwise remains PUBLIC and
+    // manual connections fail with GATT status 133.
+    if (this->model_ == GimdowModel::A1_ULTRA) {
+      this->ble_parent_->set_remote_addr_type(BLE_ADDR_TYPE_RANDOM);
+    }
+
+    ESP_LOGD(TAG, "%s", reason);
+    this->ble_parent_->connect();
+  }
+
   void request_config_enum(uint8_t dp_id, uint8_t value) {
     this->pending_config_dp_ = dp_id;
     this->pending_config_value_ = value;
@@ -218,10 +234,7 @@ class GimdowBLELock :
       return;
     }
 
-    if (this->ble_parent_ != nullptr) {
-      ESP_LOGD(TAG, "Connecting to Gimdow for config write...");
-      this->ble_parent_->connect();
-    }
+    this->connect_ble_("Connecting to Gimdow for config write...");
   }
 
 
@@ -338,10 +351,7 @@ class GimdowBLELock :
     ) {
       this->beep_volume_startup_refresh_pending_ = false;
 
-      if (this->ble_parent_ != nullptr) {
-        ESP_LOGD(TAG, "Startup BLE refresh for beep volume");
-        this->ble_parent_->connect();
-      }
+      this->connect_ble_("Startup BLE refresh for beep volume");
     }
 
     // On startup, immediately publish the current external sensor state
@@ -451,10 +461,7 @@ class GimdowBLELock :
       return;
     }
 
-    if (this->ble_parent_ != nullptr) {
-      ESP_LOGD(TAG, "Connecting to Gimdow...");
-      this->ble_parent_->connect();
-    }
+    this->connect_ble_("Connecting to Gimdow...");
   }
 
 
