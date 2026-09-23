@@ -11,7 +11,7 @@ External ESPHome component for direct local BLE control of supported Gimdow/Tuya
 
 The `model` option is **required** so a firmware update cannot silently switch a lock to a different protocol implementation.
 
-The A1 PRO MAX profile has been tested directly with this ESPHome component. The A1 Ultra profile is based on physically verified FD50/V4 lock and unlock traffic from the Tuya-BLE project, but should still be considered experimental in this ESPHome port until tested on real Gimdow Ultra hardware.
+Both supported profiles have now been tested directly with this ESPHome component on real hardware. A1 PRO MAX and A1 Ultra were verified for BLE connection, lock, unlock, beep volume control, and battery status reporting.
 
 ## Versioning
 
@@ -19,7 +19,7 @@ For installed/production devices, pin the component to a version ref instead of 
 
 - `v1.0.0` — original A1 PRO MAX-only component; no `model` option.
 - `v2.0.0` — required `model` option and support for A1 PRO MAX + A1 Ultra.
-- `v2.1.0` — adds battery level/critical diagnostics from DP9 and fixes A1 Ultra on-demand BLE connections when `auto_connect: false`.
+- `v2.1.0` — adds battery level/critical diagnostics from DP9, fixes A1 Ultra on-demand BLE connections when `auto_connect: false`, and is hardware-verified on A1 Ultra for lock, unlock, beep volume, and battery status.
 - `main` — development branch and may contain breaking changes.
 
 ESPHome supports a branch or tag after `@` in a GitHub external-component source.
