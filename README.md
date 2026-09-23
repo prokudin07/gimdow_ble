@@ -19,7 +19,7 @@ For installed/production devices, pin the component to a version ref instead of 
 
 - `v1.0.0` — original A1 PRO MAX-only component; no `model` option.
 - `v2.0.0` — required `model` option and support for A1 PRO MAX + A1 Ultra.
-- `v2.1.0` — adds battery level and critical battery diagnostics from DP9.
+- `v2.1.0` — adds battery level/critical diagnostics from DP9 and fixes A1 Ultra on-demand BLE connections when `auto_connect: false`.
 - `main` — development branch and may contain breaking changes.
 
 ESPHome supports a branch or tag after `@` in a GitHub external-component source.
@@ -134,6 +134,8 @@ lock:
 ```
 
 If `model: a1_ultra` is selected without `ble_unlock_check`, ESPHome configuration validation fails intentionally.
+
+For A1 Ultra, keep `auto_connect: false`. The component explicitly uses the lock's RANDOM BLE address type before on-demand connections, avoiding GATT `status=133` failures seen when ESPHome otherwise keeps the default PUBLIC address type.
 
 ### A1 Ultra protocol
 
