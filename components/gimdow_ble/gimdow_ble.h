@@ -1085,9 +1085,28 @@ class GimdowBLELock :
         static_cast<unsigned>(packets.size())
     );
 
-    this->tx_packets_ = packets;
-    this->tx_index_ = 0;
-    this->last_tx_ms_ = 0;
+    // Do not overwrite a command that is still being transmitted.
+    // Ultra may emit async 0x8006/0x8007 events immediately after PAIR;
+    // their response packets must be queued behind the pending lock/unlock
+    // command, otherwise the motor command can be lost before any fragment
+    // is actually written to GATT.
+    if (this->tx_index_ < this->tx_packets_.size()) {
+      ESP_LOGD(
+          TAG,
+          "Appending %u Tuya fragment(s) behind %u pending fragment(s)",
+          static_cast<unsigned>(packets.size()),
+          static_cast<unsigned>(this->tx_packets_.size() - this->tx_index_)
+      );
+      this->tx_packets_.insert(
+          this->tx_packets_.end(),
+          packets.begin(),
+          packets.end()
+      );
+    } else {
+      this->tx_packets_ = packets;
+      this->tx_index_ = 0;
+      this->last_tx_ms_ = 0;
+    }
   }
 
 
