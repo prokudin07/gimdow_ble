@@ -378,6 +378,21 @@ class GimdowBLELock :
       );
     }
 
+    // A1 Ultra is a battery lock and is more reliable when each lock/unlock
+    // command uses a fresh BLE/Tuya session. After the V4 command ACK, give
+    // the lock a short moment to emit immediate async events, then disconnect.
+    if (
+        this->ultra_disconnect_pending_ &&
+        millis() >= this->ultra_disconnect_at_ms_ &&
+        this->tx_index_ >= this->tx_packets_.size()
+    ) {
+      this->ultra_disconnect_pending_ = false;
+      ESP_LOGI(TAG, "A1 Ultra command acknowledged; disconnecting BLE for a fresh next session");
+      if (this->ble_parent_ != nullptr)
+        this->ble_parent_->disconnect();
+      return;
+    }
+
     // Send one BLE fragment at a time.
     if (this->tx_index_ >= this->tx_packets_.size())
       return;
@@ -653,6 +668,9 @@ class GimdowBLELock :
 
         this->tx_packets_.clear();
         this->tx_index_ = 0;
+
+        this->ultra_command_seq_ = 0;
+        this->ultra_disconnect_pending_ = false;
 
         break;
       }
@@ -1067,9 +1085,28 @@ class GimdowBLELock :
         static_cast<unsigned>(packets.size())
     );
 
-    this->tx_packets_ = packets;
-    this->tx_index_ = 0;
-    this->last_tx_ms_ = 0;
+    // Do not overwrite a command that is still being transmitted.
+    // Ultra may emit async 0x8006/0x8007 events immediately after PAIR;
+    // their response packets must be queued behind the pending lock/unlock
+    // command, otherwise the motor command can be lost before any fragment
+    // is actually written to GATT.
+    if (this->tx_index_ < this->tx_packets_.size()) {
+      ESP_LOGD(
+          TAG,
+          "Appending %u Tuya fragment(s) behind %u pending fragment(s)",
+          static_cast<unsigned>(packets.size()),
+          static_cast<unsigned>(this->tx_packets_.size() - this->tx_index_)
+      );
+      this->tx_packets_.insert(
+          this->tx_packets_.end(),
+          packets.begin(),
+          packets.end()
+      );
+    } else {
+      this->tx_packets_ = packets;
+      this->tx_index_ = 0;
+      this->last_tx_ms_ = 0;
+    }
   }
 
 
@@ -1367,6 +1404,25 @@ class GimdowBLELock :
     }
 
 
+    if (
+        code == FUN_SENDER_DPS_V4 &&
+        this->model_ == GimdowModel::A1_ULTRA &&
+        this->ultra_command_seq_ != 0 &&
+        response_to == this->ultra_command_seq_
+    ) {
+      ESP_LOGI(
+          TAG,
+          "A1 Ultra V4 command ACK received for seq=%u",
+          static_cast<unsigned>(response_to)
+      );
+
+      this->ultra_command_seq_ = 0;
+      this->ultra_disconnect_pending_ = true;
+      this->ultra_disconnect_at_ms_ = millis() + 750;
+      return;
+    }
+
+
     if (code == FUN_RECEIVE_DP) {
       this->parse_datapoints_v3_(
           data,
@@ -1555,6 +1611,11 @@ class GimdowBLELock :
 
         ESP_LOGI(TAG, "Sending A1 Ultra V4 manual lock");
       }
+
+      // send_packet_() uses the current sequence_ and then increments it.
+      // Remember this sequence so only the ACK for this lock/unlock command
+      // triggers the Ultra post-command disconnect.
+      this->ultra_command_seq_ = this->sequence_;
 
       this->send_packet_(
           FUN_SENDER_DPS_V4,
@@ -1956,6 +2017,12 @@ class GimdowBLELock :
   // ---------------------------------------------------------------------------
 
   uint32_t sequence_{1};
+
+  // A1 Ultra lock/unlock commands should use a fresh BLE/Tuya session.
+  // Track the V4 command sequence and disconnect shortly after its ACK.
+  uint32_t ultra_command_seq_{0};
+  bool ultra_disconnect_pending_{false};
+  uint32_t ultra_disconnect_at_ms_{0};
 
   std::vector<std::vector<uint8_t>> tx_packets_;
   size_t tx_index_{0};
