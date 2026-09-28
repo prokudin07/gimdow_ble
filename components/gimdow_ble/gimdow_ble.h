@@ -213,6 +213,20 @@ class GimdowBLELock :
       this->ble_parent_->set_remote_addr_type(BLE_ADDR_TYPE_RANDOM);
     }
 
+    // For A1 Ultra lock/unlock commands, arm ESPHome auto-connect temporarily.
+    // BLEClientBase will then wait for the next advertisement from this exact
+    // device, copy the advertised address type, and only then initiate GATT.
+    // This avoids firing a cold direct connection attempt before the lock has
+    // just advertised, which can fail with HCI reason 0x3E after long idle.
+    if (
+        this->model_ == GimdowModel::A1_ULTRA &&
+        this->command_pending_
+    ) {
+      ESP_LOGD(TAG, "%s; waiting for A1 Ultra advertisement", reason);
+      this->ble_parent_->set_auto_connect(true);
+      return;
+    }
+
     ESP_LOGD(TAG, "%s", reason);
     this->ble_parent_->connect();
   }
@@ -388,8 +402,13 @@ class GimdowBLELock :
     ) {
       this->ultra_disconnect_pending_ = false;
       ESP_LOGI(TAG, "A1 Ultra command acknowledged; disconnecting BLE for a fresh next session");
-      if (this->ble_parent_ != nullptr)
+      if (this->ble_parent_ != nullptr) {
+        // auto_connect is enabled only as a one-shot wake/connect aid for an
+        // Ultra lock/unlock command. Disable it before intentional disconnect
+        // so ESPHome does not immediately reconnect on the next advertisement.
+        this->ble_parent_->set_auto_connect(false);
         this->ble_parent_->disconnect();
+      }
       return;
     }
 
@@ -671,6 +690,16 @@ class GimdowBLELock :
 
         this->ultra_command_seq_ = 0;
         this->ultra_disconnect_pending_ = false;
+
+        // If an Ultra command connection drops before its ACK, keep the
+        // one-shot advertisement-driven reconnect armed while the command is
+        // still pending. Otherwise leave auto-connect disabled.
+        if (this->ble_parent_ != nullptr) {
+          this->ble_parent_->set_auto_connect(
+              this->model_ == GimdowModel::A1_ULTRA &&
+              this->command_pending_
+          );
+        }
 
         break;
       }
